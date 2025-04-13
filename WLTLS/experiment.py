@@ -180,3 +180,96 @@ class Experiment():
                              for x,y in zip(X,Y)])
 
         return np.mean(loss)
+
+#########################################################################
+# Explainable Experiment.
+# Enhanced experiment with explainability and robustness metrics.
+#########################################################################
+class ExplainableExperiment(Experiment):
+    def __init__(self, model, epochs=1):
+        super().__init__(model, epochs)
+        self.explanation_stats = {
+            'robustness_scores': [],
+            'confidence_scores': [],
+            'edge_importance': {}
+        }
+        
+    def _analyze_explanations(self, explanations):
+        """Analyze explanations from a batch of predictions"""
+        for exp in explanations:
+            # Track robustness scores
+            self.explanation_stats['robustness_scores'].append(
+                exp['robustness']['robustness_score']
+            )
+            
+            # Track confidence scores
+            self.explanation_stats['confidence_scores'].append(
+                exp['path_attribution']['decision_confidence']
+            )
+            
+            # Aggregate edge importance
+            for edge, importance in exp['path_attribution']['edge_importance'].items():
+                if edge not in self.explanation_stats['edge_importance']:
+                    self.explanation_stats['edge_importance'][edge] = []
+                self.explanation_stats['edge_importance'][edge].append(importance)
+    
+    def _test(self, X, Y):
+        """Enhanced testing with explainability and robustness metrics"""
+        result = super()._test(X, Y)
+        
+        if hasattr(result, 'extra_output') and 'explanations' in result['extra_output']:
+            self._analyze_explanations(result['extra_output']['explanations'])
+            
+            # Calculate aggregate statistics
+            avg_robustness = np.mean(self.explanation_stats['robustness_scores'])
+            avg_confidence = np.mean(self.explanation_stats['confidence_scores'])
+            
+            # Calculate most important edges
+            edge_importance = {
+                edge: np.mean(scores) 
+                for edge, scores in self.explanation_stats['edge_importance'].items()
+            }
+            top_edges = sorted(
+                edge_importance.items(), 
+                key=lambda x: x[1], 
+                reverse=True
+            )[:5]
+            
+            result['explanation_metrics'] = {
+                'average_robustness': avg_robustness,
+                'average_confidence': avg_confidence,
+                'top_important_edges': top_edges
+            }
+            
+        return result
+
+    def run(self, Xtrain, Ytrain, Xvalid, Yvalid, Xtest, Ytest,
+            earlyStop=False, forceStop=False, modelLogPath=None,
+            computeAverageLoss=True, returnBestValidatedModel=False):
+        
+        result = super().run(Xtrain, Ytrain, Xvalid, Yvalid, Xtest, Ytest,
+                           earlyStop, forceStop, modelLogPath,
+                           computeAverageLoss, returnBestValidatedModel)
+        
+        # Print explainability and robustness summary
+        if hasattr(self, 'explanation_stats'):
+            print("\nExplainability and Robustness Metrics:")
+            print("-" * 40)
+            
+            if self.explanation_stats['robustness_scores']:
+                print(f"Average Robustness Score: {np.mean(self.explanation_stats['robustness_scores']):.3f}")
+                print(f"Average Confidence Score: {np.mean(self.explanation_stats['confidence_scores']):.3f}")
+                
+                print("\nTop 5 Most Important Decision Edges:")
+                edge_importance = {
+                    edge: np.mean(scores) 
+                    for edge, scores in self.explanation_stats['edge_importance'].items()
+                }
+                for edge, importance in sorted(
+                    edge_importance.items(), 
+                    key=lambda x: x[1], 
+                    reverse=True
+                )[:5]:
+                    print(f"Edge {edge}: {importance:.3f}")
+                    
+        return result

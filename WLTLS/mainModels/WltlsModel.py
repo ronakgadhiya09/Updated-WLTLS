@@ -4,12 +4,12 @@ See https://github.com/ievron/wltls/ for more technical and license information.
 """
 
 import numpy as np
+from aux_lib import print_debug
+import numpy.linalg as la
 
 #############################################################################################
 # A W-LTLS model.
 #############################################################################################
-from aux_lib import print_debug
-
 
 class WltlsModel():
     POTENTIAL_PATH_NUM = 20
@@ -147,3 +147,107 @@ class WltlsModel():
         assigned = self.codeManager.assignRemainingCodes()
 
         return "Assigned {} labels.".format(assigned)
+
+
+class ExplainableWltlsModel(WltlsModel):
+    def __init__(self, LABELS, DIM, learnerClass, codeManager, decoder, isMultilabel=False, 
+                 step_size=None, epsilon=0.1, interpret_k=5):
+        super().__init__(LABELS, DIM, learnerClass, codeManager, decoder, isMultilabel, step_size)
+        self.epsilon = epsilon  # Parameter for adversarial robustness
+        self.interpret_k = interpret_k  # Number of top paths to consider for interpretation
+        
+    def get_path_attribution(self, x):
+        """Calculate path attribution scores for interpretability"""
+        margins = self._getMargins(x)
+        top_k_codes = self._decoder.findKBestCodes(margins, self.interpret_k)
+        
+        # Calculate attribution scores for each edge
+        edge_scores = {}
+        for i, margin in enumerate(margins):
+            edge_scores[i] = abs(margin)  # Importance of each edge decision
+            
+        # Get path probabilities
+        path_probs = {}
+        total_score = 0
+        for code in top_k_codes:
+            score = sum([margins[i] if c == 1 else -margins[i] for i, c in enumerate(code)])
+            path_probs[tuple(code)] = np.exp(score)
+            total_score += np.exp(score)
+            
+        # Normalize probabilities
+        for k in path_probs:
+            path_probs[k] /= total_score
+            
+        return {
+            'edge_importance': edge_scores,
+            'path_probabilities': path_probs,
+            'decision_confidence': max(path_probs.values())
+        }
+        
+    def verify_prediction_robustness(self, x, pred_label):
+        """Verify if prediction is robust against adversarial perturbations"""
+        margins = self._getMargins(x)
+        orig_code = self.codeManager.labelToCode(pred_label)
+        
+        # Calculate decision boundary distance
+        min_perturbation = float('inf')
+        for label in range(self.LABELS):
+            if label == pred_label:
+                continue
+                
+            target_code = self.codeManager.labelToCode(label)
+            if target_code is None:
+                continue
+                
+            # Calculate minimum perturbation needed to change prediction
+            diff_positions = [i for i in range(len(orig_code)) if orig_code[i] != target_code[i]]
+            for pos in diff_positions:
+                w = self._learners[pos].mean  # Get decision boundary normal vector
+                margin = margins[pos]
+                perturbation = abs(margin) / (la.norm(w) + 1e-10)
+                min_perturbation = min(min_perturbation, perturbation)
+        
+        is_robust = min_perturbation > self.epsilon
+        return {
+            'is_robust': is_robust,
+            'perturbation_bound': min_perturbation,
+            'robustness_score': min_perturbation / self.epsilon
+        }
+        
+    def _predictAndRefit(self, x, y):
+        """Enhanced prediction with both explainability and robustness"""
+        pred_label = super()._predictAndRefit(x, y)
+        
+        if pred_label is not None:
+            # Get explainability metrics
+            path_attrs = self.get_path_attribution(x)
+            
+            # Check robustness
+            robust_metrics = self.verify_prediction_robustness(x, pred_label)
+            
+            # Store metrics for later use
+            self._last_explanation = {
+                'path_attribution': path_attrs,
+                'robustness': robust_metrics
+            }
+            
+        return pred_label
+
+    def predictFinal(self, X):
+        """Enhanced final prediction with explanations and robustness checks"""
+        yPredicted, extraOutput = super().predictFinal(X)
+        
+        explanations = []
+        for i, x in enumerate(X):
+            path_attrs = self.get_path_attribution(x)
+            robust_metrics = self.verify_prediction_robustness(x, yPredicted[i])
+            
+            explanations.append({
+                'path_attribution': path_attrs,
+                'robustness': robust_metrics
+            })
+            
+        return yPredicted, {
+            'base_output': extraOutput,
+            'explanations': explanations
+        }
