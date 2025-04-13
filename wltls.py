@@ -5,12 +5,12 @@ from graphs import TrellisGraph
 import argparse
 import warnings
 import numpy as np
-from WLTLS.mainModels import WltlsModel
+from WLTLS.mainModels.WltlsModel import ExplainableWltlsModel
 from WLTLS.learners import AveragedPerceptron, AROW
 from aux_lib import Timing
 from WLTLS.codeManager import GreedyCodeManager, RandomCodeManager
 from WLTLS.datasets import datasets
-from WLTLS.experiment import Experiment
+from WLTLS.experiment import ExplainableExperiment
 import os
 
 # Const choices
@@ -54,6 +54,10 @@ parser.add_argument("-binary_classifier", choices=[LEARNER_AROW, LEARNER_PERCEPT
 parser.add_argument("--plot_graph", dest='show_graph', action='store_true', help="Plot the trellis graph on start")
 parser.add_argument("--sparse", dest='try_sparse', action='store_true',
                     help="Experiment sparse models at the end of training")
+parser.add_argument("-epsilon", type=float, default=0.1,
+                    help="Adversarial robustness threshold (epsilon)")
+parser.add_argument("-interpret_k", type=int, default=5,
+                    help="Number of top paths to consider for interpretation")
 parser.set_defaults(show_graph=False)
 
 args = parser.parse_args()
@@ -115,30 +119,47 @@ else:
 print("Using {} as the binary classifier.".format(args.binary_classifier))
 print("Decoding according to the {} loss.".format(args.decoding_loss))
 
-# Create the model
-mainModel = WltlsModel(LABELS, DIMS, learner, codeManager, heaviestPaths)
+# Create the model with explainability and robustness features
+mainModel = ExplainableWltlsModel(
+    LABELS, DIMS, learner, codeManager, heaviestPaths,
+    epsilon=args.epsilon, interpret_k=args.interpret_k
+)
+
+print(f"Adversarial robustness epsilon: {args.epsilon}")
+print(f"Number of paths for interpretation: {args.interpret_k}")
 
 printSeparator()
 
-# Run the experiment
-Experiment(mainModel, EPOCHS).run(Xtrain, Ytrain, Xvalid, Yvalid, Xtest, Ytest,
-                                  modelLogPath=LOG_PATH,
-                                  returnBestValidatedModel=True)
-
+# Run the explainable experiment
+ExplainableExperiment(mainModel, EPOCHS).run(
+    Xtrain, Ytrain, Xvalid, Yvalid, Xtest, Ytest,
+    modelLogPath=LOG_PATH,
+    returnBestValidatedModel=True
+)
 
 printSeparator()
 
-# Create a final model (for fast inference) and test it
+# Create a final model (for fast inference) and test it with explanations
 finalModel = FinalModel(DIMS, mainModel, codeManager, heaviestPaths)
 del mainModel
 
 # Use fixed path for scores file
-scores_file = "/content/sector_scores.txt"
+scores_file = os.path.join(args.model_dir, "model_scores.txt")
 result = finalModel.test(Xtest, Ytest, save_scores=True, scores_file=scores_file)
 
 print("The final model was tested in {} and achieved {:.1f}% accuracy.".format(
     Timing.secondsToString(result["time"]), result["accuracy"]
 ))
+
+if "explanation_metrics" in result:
+    print("\nExplanation and Robustness Metrics:")
+    print("-" * 40)
+    metrics = result["explanation_metrics"]
+    print(f"Average Robustness Score: {metrics['average_robustness']:.3f}")
+    print(f"Average Confidence Score: {metrics['average_confidence']:.3f}")
+    print("\nTop 5 Most Important Decision Edges:")
+    for edge, importance in metrics["top_important_edges"]:
+        print(f"Edge {edge}: {importance:.3f}")
 
 printSeparator()
 
