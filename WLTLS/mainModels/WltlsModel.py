@@ -239,8 +239,11 @@ class ExplainableWltlsModel(WltlsModel):
         
         explanations = []
         for i, x in enumerate(X):
+            # Extract the first prediction since _predict returns a list
+            pred = yPredicted[i][0] if isinstance(yPredicted[i], list) else yPredicted[i]
+            
             path_attrs = self.get_path_attribution(x)
-            robust_metrics = self.verify_prediction_robustness(x, yPredicted[i])
+            robust_metrics = self.verify_prediction_robustness(x, pred)
             
             explanations.append({
                 'path_attribution': path_attrs,
