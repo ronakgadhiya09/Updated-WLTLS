@@ -8,6 +8,7 @@ See the paper for more details on the different losses.
 import numpy as np
 from aux_lib import Timing, print_debug
 import random
+from WLTLS.mainModels.surrogateModel import AdversarialTrainer
 
 #########################################################################
 # An entire experiment.
@@ -68,7 +69,12 @@ class Experiment():
         t = Timing()
         t.start()
 
-        yPredicted = self._model.train(Xtrain, Ytrain)
+        # Initialize adversarial trainer if needed
+        if not hasattr(self, '_adv_trainer'):
+            self._adv_trainer = AdversarialTrainer(self._model)
+
+        # Train with adversarial examples
+        yPredicted = self._adv_trainer.train_with_adversarial(Xtrain, Ytrain)
 
         trainAccuracy = 100 * self.evaluateScore(Ytrain, yPredicted)
 

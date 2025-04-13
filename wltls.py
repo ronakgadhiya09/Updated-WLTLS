@@ -29,7 +29,7 @@ def printSeparator():
 all_datasets = [d.name for d in datasets.getAll()]
 
 # Set argument parser
-parser = argparse.ArgumentParser(description="Runs a single W-LTLS experiment. " +
+parser = argparse.ArgumentParser(description="Runs a single W-LTLS experiment with adversarial training. " +
                                              "See https://github.com/ievron/wltls/ for documentation and license details.")
 parser.add_argument("dataset",
                     choices=all_datasets,
@@ -54,7 +54,13 @@ parser.add_argument("-binary_classifier", choices=[LEARNER_AROW, LEARNER_PERCEPT
 parser.add_argument("--plot_graph", dest='show_graph', action='store_true', help="Plot the trellis graph on start")
 parser.add_argument("--sparse", dest='try_sparse', action='store_true',
                     help="Experiment sparse models at the end of training")
-parser.set_defaults(show_graph=False)
+parser.add_argument("-epsilon", type=float, default=0.1,
+                    help="Maximum perturbation for FGSM adversarial training")
+parser.add_argument("-surrogate_epochs", type=int, default=5,
+                    help="Number of epochs to train surrogate model")
+parser.add_argument("--disable_adversarial", dest='use_adversarial', action='store_false',
+                    help="Disable adversarial training")
+parser.set_defaults(show_graph=False, use_adversarial=True)
 
 args = parser.parse_args()
 
